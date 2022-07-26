@@ -59,51 +59,32 @@ type SaveableEntity interface {
 
 // entities holds a map of name => SaveableEntity to be used for looking up the entity by a string ID. It is registered
 // to when calling RegisterEntity.
-var entities = map[string]SaveableEntity{}
+var entities = map[string]Entity{}
 
-// entities holds a map of name => CustomEntity to be used for looking up the entity by a string ID. It is registered
-// to when calling RegisterEntity.
-var customEntities = map[string]CustomEntity{}
-
-// RegisterEntity can accept two types of entities
-// CustomEntity: To allow definition of new entities
-// SaveableEntity: To help the world point to an entity type while loading data
+// RegisterEntity registers a SaveableEntity to the map so that it can be saved and loaded with the world.
 func RegisterEntity(e Entity) {
 	name := e.EncodeEntity()
-	if customEntity, ok := e.(CustomEntity); ok {
-		if _, ok = customEntities[name]; ok {
-			panic("cannot register the same entity (" + name + ") twice")
-		}
-		customEntities[name] = customEntity
+	if _, ok := entities[name]; ok {
+		panic("cannot register the same entity (" + name + ") twice")
 	}
-
-	if saveable, ok := e.(SaveableEntity); ok {
-		if _, ok = entities[name]; ok {
-			panic("cannot register the same entity (" + name + ") twice")
-		}
-		entities[name] = saveable
-	}
+	entities[name] = e
 }
 
 // EntityByName looks up a SaveableEntity by the name (for example, 'minecraft:slime') and returns it if found.
 // EntityByName can only return entities previously registered using RegisterEntity. If not found, the bool returned is
 // false.
-func EntityByName(name string) (SaveableEntity, bool) {
+func EntityByName(name string) (Entity, bool) {
 	e, ok := entities[name]
 	return e, ok
 }
 
 // Entities returns all registered entities.
-func Entities() []SaveableEntity {
-	es := make([]SaveableEntity, 0, len(entities))
+func Entities() []Entity {
+	es := make([]Entity, 0, len(entities))
 	for _, e := range entities {
 		es = append(es, e)
 	}
 	return es
-}
-
-func CustomEntities() map[string]CustomEntity {
-	return customEntities
 }
 
 // EntityAction represents an action that may be performed by an entity. Typically, these actions are sent to
