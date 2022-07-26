@@ -1,10 +1,10 @@
 package packbuilder
 
 import (
+	"io/ioutil"
+
 	"github.com/rogpeppe/go-internal/dirhash"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
-	"io/ioutil"
-	"os"
 )
 
 // formatVersion is the format version used for the resource pack. The client does not accept all versions as
@@ -19,7 +19,7 @@ func BuildResourcePack() (*resource.Pack, bool) {
 	if err != nil {
 		panic(err)
 	}
-	defer os.RemoveAll(dir)
+	// defer os.RemoveAll(dir)
 
 	var assets int
 	var lang []string
@@ -27,6 +27,10 @@ func BuildResourcePack() (*resource.Pack, bool) {
 	itemCount, itemLang := buildItems(dir)
 	assets += itemCount
 	lang = append(lang, itemLang...)
+
+	entityCount, entityLang := buildEntities(dir)
+	assets += entityCount
+	lang = append(lang, entityLang...)
 
 	if assets > 0 {
 		buildLanguageFile(dir, lang)

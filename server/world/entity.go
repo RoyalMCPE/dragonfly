@@ -1,9 +1,12 @@
 package world
 
 import (
-	"github.com/df-mc/dragonfly/server/block/cube"
-	"github.com/go-gl/mathgl/mgl64"
+	"image"
 	"io"
+
+	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/entity/customentity"
+	"github.com/go-gl/mathgl/mgl64"
 )
 
 // Entity represents an entity in the world, typically an object that may be moved around and can be
@@ -33,6 +36,13 @@ type Entity interface {
 	World() *World
 }
 
+type CustomEntity interface {
+	Entity
+
+	Texture() image.Image
+	Geometry() customentity.Geometry
+}
+
 // TickerEntity represents an entity that has a Tick method which should be called every time the entity is
 // ticked every 20th of a second.
 type TickerEntity interface {
@@ -51,13 +61,28 @@ type SaveableEntity interface {
 // to when calling RegisterEntity.
 var entities = map[string]SaveableEntity{}
 
-// RegisterEntity registers a SaveableEntity to the map so that it can be saved and loaded with the world.
-func RegisterEntity(e SaveableEntity) {
+// entities holds a map of name => CustomEntity to be used for looking up the entity by a string ID. It is registered
+// to when calling RegisterEntity.
+var customEntities = map[string]CustomEntity{}
+
+// RegisterEntity can accept two types of entities
+// CustomEntity: To allow definition of new entities
+// SaveableEntity: To help the world point to an entity type while loading data
+func RegisterEntity(e Entity) {
 	name := e.EncodeEntity()
-	if _, ok := entities[name]; ok {
-		panic("cannot register the same entity (" + name + ") twice")
+	if customEntity, ok := e.(CustomEntity); ok {
+		if _, ok = customEntities[name]; ok {
+			panic("cannot register the same entity (" + name + ") twice")
+		}
+		customEntities[name] = customEntity
 	}
-	entities[name] = e
+
+	if saveable, ok := e.(SaveableEntity); ok {
+		if _, ok = entities[name]; ok {
+			panic("cannot register the same entity (" + name + ") twice")
+		}
+		entities[name] = saveable
+	}
 }
 
 // EntityByName looks up a SaveableEntity by the name (for example, 'minecraft:slime') and returns it if found.
@@ -75,6 +100,10 @@ func Entities() []SaveableEntity {
 		es = append(es, e)
 	}
 	return es
+}
+
+func CustomEntities() map[string]CustomEntity {
+	return customEntities
 }
 
 // EntityAction represents an action that may be performed by an entity. Typically, these actions are sent to
