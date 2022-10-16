@@ -51,10 +51,7 @@ type Server struct {
 
 	world, nether, end *world.World
 
-	customItems []protocol.ItemComponentEntry
-
 	listeners []Listener
-	incoming  chan *session.Session
 
 	pmu sync.RWMutex
 
@@ -310,15 +307,12 @@ func (srv *Server) startListening() {
 // makeItemComponents initializes the server's item components map using the registered custom items. It allows item
 // components to be created only once at startup.
 func (srv *Server) makeItemComponents() {
-	custom := world.CustomItems()
-	srv.customItems = make([]protocol.ItemComponentEntry, len(custom))
-
-	for _, it := range custom {
+	srv.itemComponents = make(map[string]map[string]any)
+	for _, it := range world.CustomItems() {
 		name, _ := it.EncodeItem()
-		srv.customItems = append(srv.customItems, protocol.ItemComponentEntry{
-			Name: name,
-			Data: iteminternal.Components(it),
-		})
+		if data, ok := iteminternal.Components(it); ok {
+			srv.itemComponents[name] = data
+		}
 	}
 }
 
@@ -329,7 +323,7 @@ func (srv *Server) makeBlockComponents() {
 	for identifier, group := range world.CustomBlocks() {
 		data, err := blockinternal.Components(identifier, group)
 		if err != nil {
-			srv.log.Fatalf("error creating block components: %v", err)
+			srv.conf.Log.Fatalf("error creating block components: %v", err)
 		}
 		srv.blockComponents[identifier] = data
 	}
@@ -390,7 +384,6 @@ func (srv *Server) defaultGameData() minecraft.GameData {
 		PlayerPosition:               vec64To32(srv.world.Spawn().Vec3Centre().Add(mgl64.Vec3{0, 1.62})),
 		CustomBlocks:                 srv.blockEntries(),
 		PlayerMovementSettings:       protocol.PlayerMovementSettings{MovementType: protocol.PlayerMovementModeServer, ServerAuthoritativeBlockBreaking: true},
-		ServerAuthoritativeInventory: true,
 		Experiments: []protocol.ExperimentData{
 			{
 				// The 'data_driven_items' experiment is required for custom blocks to render.

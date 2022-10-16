@@ -1,14 +1,15 @@
 package iteminternal
 
 import (
+	"strings"
+
 	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/world"
-	"strings"
 )
 
 // Components returns all the components of the given custom item. If the item has no components, a nil map and false
 // are returned.
-func Components(it world.CustomItem) map[string]any {
+func Components(it world.CustomItem) (map[string]any, bool) {
 	category := it.Category()
 	identifier, _ := it.EncodeItem()
 	name := strings.Split(identifier, ":")[1]
@@ -81,27 +82,12 @@ func Components(it world.CustomItem) map[string]any {
 	if x, ok := it.(item.HandEquipped); ok {
 		builder.AddProperty("hand_equipped", x.HandEquipped())
 	}
-	itemScale := calculateItemScale(it)
-	builder.AddComponent("minecraft:render_offsets", map[string]any{
-		"main_hand": map[string]any{
-			"first_person": map[string]any{
-				"scale": itemScale,
-			},
-			"third_person": map[string]any{
-				"scale": itemScale,
-			},
-		},
-		"off_hand": map[string]any{
-			"first_person": map[string]any{
-				"scale": itemScale,
-			},
-			"third_person": map[string]any{
-				"scale": itemScale,
-			},
-		},
-	})
 
-	return builder.Construct()
+	// If an item has no new components or properties then it should not be considered a component-based item.
+	if builder.Empty() {
+		return nil, false
+	}
+	return builder.Construct(), true
 }
 
 // calculateItemScale calculates the scale of the item to be rendered to the player according to the given size.

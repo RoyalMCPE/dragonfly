@@ -1,9 +1,10 @@
 package iteminternal
 
 import (
+	"strings"
+
 	"github.com/df-mc/dragonfly/server/item/category"
 	"golang.org/x/exp/maps"
-	"strings"
 )
 
 // ComponentBuilder represents a builder that can be used to construct an item components map to be sent to a client.
@@ -36,6 +37,11 @@ func (builder *ComponentBuilder) AddProperty(name string, value any) {
 // AddComponent adds the provided component to the builder.
 func (builder *ComponentBuilder) AddComponent(name string, value any) {
 	builder.components[name] = value
+}
+
+// Empty returns if there are no components or item properties in the builder.
+func (builder *ComponentBuilder) Empty() bool {
+	return len(builder.properties) == 0 && len(builder.components) == 0
 }
 
 // Construct constructs the final item components map and returns it. It also applies the default properties required
