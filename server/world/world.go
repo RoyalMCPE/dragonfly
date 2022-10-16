@@ -2,6 +2,10 @@ package world
 
 import (
 	"fmt"
+	"math/rand"
+	"sync"
+	"time"
+
 	"github.com/df-mc/atomic"
 	"github.com/df-mc/dragonfly/server/block/cube"
 	"github.com/df-mc/dragonfly/server/event"
@@ -11,9 +15,6 @@ import (
 	"github.com/google/uuid"
 	"golang.org/x/exp/maps"
 	"golang.org/x/exp/slices"
-	"math/rand"
-	"sync"
-	"time"
 )
 
 // World implements a Minecraft world. It manages all aspects of what players can see, such as blocks,
@@ -23,6 +24,7 @@ import (
 // A nil *World is safe to use but not functional.
 type World struct {
 	conf Config
+	ra   cube.Range
 	// advance is a bool that specifies if this World should advance the current tick, time and weather saved in the
 	// Settings struct held by the World.
 	advance bool
@@ -95,7 +97,7 @@ func (w *World) Range() cube.Range {
 	if w == nil {
 		return cube.Range{}
 	}
-	return w.conf.Dim.Range()
+	return w.ra
 }
 
 // Block reads a block from the position passed. If a chunk is not yet loaded at that position, the chunk is
@@ -258,7 +260,7 @@ func (w *World) SetBlock(pos cube.Pos, b Block, opts *SetOpts) {
 			}
 		} else if liquidDisplacingBlocks[rid] && liquidBlocks[before] {
 			l, _ := BlockByRuntimeID(before)
-			if liq := l.(Liquid); b.(LiquidDisplacer).CanDisplace(liq) && liq.LiquidDepth() == 8 {
+			if b.(LiquidDisplacer).CanDisplace(l.(Liquid)) {
 				c.SetBlock(x, y, z, 1, before)
 				secondLayer = l
 			}
@@ -358,10 +360,11 @@ func (w *World) BuildStructure(pos cube.Pos, s Structure) {
 								rid := BlockRuntimeID(b)
 								sub.SetBlock(uint8(xOffset), uint8(yOffset), uint8(zOffset), 0, rid)
 
+								nbtPos := cube.Pos{xOffset, yOffset, zOffset}
 								if nbtBlocks[rid] {
-									c.e[pos] = b
+									c.e[nbtPos] = b
 								} else {
-									delete(c.e, pos)
+									delete(c.e, nbtPos)
 								}
 							}
 							if liq != nil {
@@ -1040,7 +1043,13 @@ func (w *World) close() {
 func (w *World) allViewers() ([]Viewer, []*Loader) {
 	w.viewersMu.Lock()
 	defer w.viewersMu.Unlock()
-	return maps.Values(w.viewers), maps.Keys(w.viewers)
+
+	viewers, loaders := make([]Viewer, 0, len(w.viewers)), make([]*Loader, 0, len(w.viewers))
+	for k, v := range w.viewers {
+		viewers = append(viewers, v)
+		loaders = append(loaders, k)
+	}
+	return viewers, loaders
 }
 
 // addWorldViewer adds a viewer to the world. Should only be used while the viewer isn't viewing any chunks.
