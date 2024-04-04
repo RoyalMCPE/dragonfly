@@ -160,7 +160,7 @@ func (c colour) String() string {
 	case 7:
 		return "gray"
 	case 8:
-		return "silver"
+		return "light_gray"
 	case 9:
 		return "cyan"
 	case 10:
@@ -176,6 +176,14 @@ func (c colour) String() string {
 	case 15:
 		return "black"
 	}
+}
+
+// SilverString returns the name of the colour, with light_gray being replaced by silver.
+func (c colour) SilverString() string {
+	if c == 8 {
+		return "silver"
+	}
+	return c.String()
 }
 
 // Uint8 ...

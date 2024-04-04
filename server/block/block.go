@@ -2,8 +2,8 @@ package block
 
 import (
 	"github.com/df-mc/dragonfly/server/block/cube"
+	"github.com/df-mc/dragonfly/server/block/customblock"
 	"github.com/df-mc/dragonfly/server/block/model"
-	"github.com/df-mc/dragonfly/server/entity/damage"
 	"github.com/df-mc/dragonfly/server/item"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/df-mc/dragonfly/server/world/sound"
@@ -74,11 +74,22 @@ type EntityInsider interface {
 	EntityInside(pos cube.Pos, w *world.World, e world.Entity)
 }
 
-// Frictional represents a block that may have a custom friction value, friction is used for entity drag when the
+// Frictional represents a block that may have a custom friction value. Friction is used for entity drag when the
 // entity is on ground. If a block does not implement this interface, it should be assumed that its friction is 0.6.
 type Frictional interface {
 	// Friction returns the block's friction value.
 	Friction() float64
+}
+
+// Permutable represents a custom block that can have more permutations than its default state.
+type Permutable interface {
+	// States returns a map of all the different properties for the block. The key is the property name, and the value
+	// is a slice of all the possible values for that property. It is important that a block is registered in dragonfly
+	// for each of the possible combinations of properties and values.
+	States() map[string][]any
+	// Permutations returns a slice of all the different permutations for the block. Multiple permutations can be
+	// applied at once if their conditions are met.
+	Permutations() []customblock.Permutation
 }
 
 func calculateFace(user item.User, placePos cube.Pos) cube.Face {
@@ -96,7 +107,7 @@ func calculateFace(user item.User, placePos cube.Pos) cube.Face {
 			return cube.FaceDown
 		}
 	}
-	return user.Facing().Opposite().Face()
+	return user.Rotation().Direction().Opposite().Face()
 }
 
 func abs(x int) int {
@@ -205,17 +216,7 @@ func (g gravityAffected) fall(b world.Block, pos cube.Pos, w *world.World) {
 	_, liquid := w.Liquid(pos.Side(cube.FaceDown))
 	if air || liquid {
 		w.SetBlock(pos, nil, nil)
-
-		ent, ok := world.EntityByName("minecraft:falling_block")
-		if !ok {
-			return
-		}
-
-		if p, ok := ent.(interface {
-			New(bl world.Block, pos mgl64.Vec3) world.Entity
-		}); ok {
-			w.AddEntity(p.New(b, pos.Vec3Centre()))
-		}
+		w.AddEntity(w.EntityRegistry().Config().FallingBlock(b, pos.Vec3Centre()))
 	}
 }
 
@@ -254,7 +255,7 @@ type livingEntity interface {
 	// If the final damage exceeds the health that the entity currently has, the entity is killed.
 	// Hurt returns the final amount of damage dealt to the Living entity and returns whether the Living entity
 	// was vulnerable to the damage at all.
-	Hurt(damage float64, src damage.Source) (n float64, vulnerable bool)
+	Hurt(damage float64, src world.DamageSource) (n float64, vulnerable bool)
 }
 
 // flammableEntity ...
@@ -269,16 +270,8 @@ type flammableEntity interface {
 
 // dropItem ...
 func dropItem(w *world.World, it item.Stack, pos mgl64.Vec3) {
-	ent, ok := world.EntityByName("minecraft:item")
-	if !ok {
-		return
-	}
-
-	if p, ok := ent.(interface {
-		New(it item.Stack, pos, vel mgl64.Vec3) world.Entity
-	}); ok {
-		w.AddEntity(p.New(it, pos, mgl64.Vec3{rand.Float64()*0.2 - 0.1, 0.2, rand.Float64()*0.2 - 0.1}))
-	}
+	create := w.EntityRegistry().Config().Item
+	w.AddEntity(create(it, pos, mgl64.Vec3{rand.Float64()*0.2 - 0.1, 0.2, rand.Float64()*0.2 - 0.1}))
 }
 
 // bass is a struct that may be embedded for blocks that create a bass sound.

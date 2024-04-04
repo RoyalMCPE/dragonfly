@@ -20,11 +20,10 @@ type Deepslate struct {
 
 // BreakInfo ...
 func (d Deepslate) BreakInfo() BreakInfo {
-	hardness := 3.5
 	if d.Type == NormalDeepslate() {
-		hardness = 3
+		return newBreakInfo(3, pickaxeHarvestable, pickaxeEffective, silkTouchOneOf(Deepslate{Type: CobbledDeepslate()}, d)).withBlastResistance(18)
 	}
-	return newBreakInfo(hardness, pickaxeHarvestable, pickaxeEffective, oneOf(d)).withBlastResistance(18)
+	return newBreakInfo(3.5, pickaxeHarvestable, pickaxeEffective, oneOf(d)).withBlastResistance(18)
 }
 
 // SmeltInfo ...
@@ -65,7 +64,13 @@ func (d Deepslate) EncodeBlock() (string, map[string]any) {
 // allDeepslate returns a list of all deepslate block variants.
 func allDeepslate() (s []world.Block) {
 	for _, t := range DeepslateTypes() {
-		s = append(s, Deepslate{Type: t})
+		axes := []cube.Axis{0}
+		if t == NormalDeepslate() {
+			axes = cube.Axes()
+		}
+		for _, axis := range axes {
+			s = append(s, Deepslate{Type: t, Axis: axis})
+		}
 	}
 	return
 }

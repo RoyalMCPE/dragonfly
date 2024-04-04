@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"github.com/df-mc/atomic"
 	"github.com/df-mc/dragonfly/server/cmd"
+	"github.com/df-mc/dragonfly/server/internal/blockinternal"
 	"github.com/df-mc/dragonfly/server/internal/iteminternal"
 	"github.com/df-mc/dragonfly/server/internal/sliceutil"
 	_ "github.com/df-mc/dragonfly/server/item" // Imported for maintaining correct initialisation order.
@@ -26,7 +27,6 @@ import (
 	"github.com/sandertv/gophertunnel/minecraft/text"
 	"github.com/sirupsen/logrus"
 	"golang.org/x/exp/maps"
-	"math/rand"
 	"os"
 	"os/exec"
 	"os/signal"
@@ -34,7 +34,6 @@ import (
 	"strings"
 	"sync"
 	"syscall"
-	"time"
 )
 
 // Server implements a Dragonfly server. It runs the main server loop and
@@ -47,7 +46,8 @@ type Server struct {
 
 	world, nether, end *world.World
 
-	customItems []protocol.ItemComponentEntry
+	customBlocks []protocol.BlockEntry
+	customItems  []protocol.ItemComponentEntry
 
 	listeners []Listener
 	incoming  chan *session.Session
@@ -221,14 +221,10 @@ func (srv *Server) close() {
 	}
 
 	srv.conf.Log.Debugf("Closing worlds...")
-	if err := srv.nether.Close(); err != nil {
-		srv.conf.Log.Errorf("Error closing nether %v", err)
-	}
-	if err := srv.end.Close(); err != nil {
-		srv.conf.Log.Errorf("Error closing end: %v", err)
-	}
-	if err := srv.world.Close(); err != nil {
-		srv.conf.Log.Errorf("Error closing overworld: %v", err)
+	for _, w := range []*world.World{srv.end, srv.nether, srv.world} {
+		if err := w.Close(); err != nil {
+			srv.conf.Log.Errorf("Error closing %v: %v", w.Dimension(), err)
+		}
 	}
 
 	srv.conf.Log.Debugf("Closing listeners...")
@@ -244,52 +240,65 @@ func (srv *Server) close() {
 // the maximum player count of additional Listeners added is not enforced
 // automatically. The limit must be enforced by the Listener.
 func (srv *Server) listen(l Listener) {
-	srv.wg.Add(1)
-
 	wg := new(sync.WaitGroup)
-	go func() {
-		ctx, cancel := context.WithCancel(context.Background())
-		for {
-			c, err := l.Accept()
-			if err != nil {
-				// Cancel the context so that any call to StartGameContext is
-				// cancelled rapidly.
-				cancel()
-				// First wait until all connections that are being handled are
-				// done inserting the player into the channel. Afterwards, when
-				// we're sure no more values will be inserted in the players
-				// channel, we can return so the player channel can be closed.
-				wg.Wait()
-				srv.wg.Done()
+	ctx, cancel := context.WithCancel(context.Background())
+	for {
+		c, err := l.Accept()
+		if err != nil {
+			// Cancel the context so that any call to StartGameContext is
+			// cancelled rapidly.
+			cancel()
+			// First wait until all connections that are being handled are
+			// done inserting the player into the channel. Afterwards, when
+			// we're sure no more values will be inserted in the players
+			// channel, we can return so the player channel can be closed.
+			wg.Wait()
+			srv.wg.Done()
+			return
+		}
+
+		wg.Add(1)
+		go func() {
+			defer wg.Done()
+			if msg, ok := srv.conf.Allower.Allow(c.RemoteAddr(), c.IdentityData(), c.ClientData()); !ok {
+				_ = c.WritePacket(&packet.Disconnect{HideDisconnectionScreen: msg == "", Message: msg})
+				_ = c.Close()
 				return
 			}
-
-			wg.Add(1)
-			go func() {
-				defer wg.Done()
-				if msg, ok := srv.conf.Allower.Allow(c.RemoteAddr(), c.IdentityData(), c.ClientData()); !ok {
-					_ = c.WritePacket(&packet.Disconnect{HideDisconnectionScreen: msg == "", Message: msg})
-					_ = c.Close()
-					return
-				}
-				srv.finaliseConn(ctx, c, l)
-			}()
-		}
-	}()
+			srv.finaliseConn(ctx, c, l)
+		}()
+	}
 }
 
 // startListening starts making the EncodeBlock listener listen, accepting new
 // connections from players.
 func (srv *Server) startListening() {
+	srv.makeBlockEntries()
 	srv.makeItemComponents()
 
+	srv.wg.Add(len(srv.conf.Listeners))
 	for _, lf := range srv.conf.Listeners {
 		l, err := lf(srv.conf)
 		if err != nil {
 			srv.conf.Log.Fatalf("create listener: %v", err)
 		}
 		srv.listeners = append(srv.listeners, l)
-		srv.listen(l)
+		go srv.listen(l)
+	}
+}
+
+// makeBlockEntries initializes the server's block components map using the registered custom blocks. It allows block
+// components to be created only once at startup.
+func (srv *Server) makeBlockEntries() {
+	custom := maps.Values(world.CustomBlocks())
+	srv.customBlocks = make([]protocol.BlockEntry, len(custom))
+
+	for i, b := range custom {
+		name, _ := b.EncodeBlock()
+		srv.customBlocks[i] = protocol.BlockEntry{
+			Name:       name,
+			Properties: blockinternal.Components(name, b, 10000+int32(i)),
+		}
 	}
 }
 
@@ -323,16 +332,21 @@ func (srv *Server) finaliseConn(ctx context.Context, conn session.Conn, l Listen
 	data := srv.defaultGameData()
 
 	var playerData *player.Data
-	if d, err := srv.conf.PlayerProvider.Load(id); err == nil {
+	if d, err := srv.conf.PlayerProvider.Load(id, srv.dimension); err == nil {
+		if d.World == nil {
+			d.World = srv.world
+		}
 		data.PlayerPosition = vec64To32(d.Position).Add(mgl32.Vec3{0, 1.62})
+		dim, _ := world.DimensionID(d.World.Dimension())
+		data.Dimension = int32(dim)
 		data.Yaw, data.Pitch = float32(d.Yaw), float32(d.Pitch)
-		data.Dimension = int32(srv.dimension(d.Dimension).Dimension().EncodeDimension())
 
 		playerData = &d
 	}
 
 	if err := conn.StartGameContext(ctx, data); err != nil {
 		_ = l.Disconnect(conn, "Connection timeout.")
+
 		srv.conf.Log.Debugf("connection %v failed spawning: %v\n", conn.RemoteAddr(), err)
 		return
 	}
@@ -344,35 +358,44 @@ func (srv *Server) finaliseConn(ctx context.Context, conn session.Conn, l Listen
 }
 
 // defaultGameData returns a minecraft.GameData as sent for a new player. It
-// may later be modified if the player was saved in the player provide rof the
+// may later be modified if the player was saved in the player provider of the
 // server.
 func (srv *Server) defaultGameData() minecraft.GameData {
 	return minecraft.GameData{
 		// We set these IDs to 1, because that's how the session will treat them.
-		EntityUniqueID:               1,
-		EntityRuntimeID:              1,
-		Difficulty:                   2,
-		Yaw:                          90,
+		EntityUniqueID:  1,
+		EntityRuntimeID: 1,
+
+		WorldName:       srv.conf.Name,
+		BaseGameVersion: protocol.CurrentVersion,
+
+		Time:       int64(srv.world.Time()),
+		Difficulty: 2,
+
+		PlayerGameMode:    packet.GameTypeCreative,
+		PlayerPermissions: packet.PermissionLevelMember,
+		PlayerPosition:    vec64To32(srv.world.Spawn().Vec3Centre().Add(mgl64.Vec3{0, 1.62})),
+
+		Items:        srv.itemEntries(),
+		CustomBlocks: srv.customBlocks,
+		GameRules:    []protocol.GameRule{{Name: "naturalregeneration", Value: false}},
+
 		ServerAuthoritativeInventory: true,
-		WorldName:                    srv.conf.Name,
-		Items:                        srv.itemEntries(),
-		Time:                         int64(srv.world.Time()),
-		PlayerGameMode:               packet.GameTypeCreative,
-		PlayerPermissions:            packet.PermissionLevelMember,
-		GameRules:                    []protocol.GameRule{{Name: "naturalregeneration", Value: false}},
-		PlayerPosition:               vec64To32(srv.world.Spawn().Vec3Centre().Add(mgl64.Vec3{0, 1.62})),
-		PlayerMovementSettings:       protocol.PlayerMovementSettings{MovementType: protocol.PlayerMovementModeServer, ServerAuthoritativeBlockBreaking: true},
+		PlayerMovementSettings: protocol.PlayerMovementSettings{
+			MovementType:                     protocol.PlayerMovementModeServer,
+			ServerAuthoritativeBlockBreaking: true,
+		},
 	}
 }
 
-// dimension returns a world by a dimension ID passed.
-func (srv *Server) dimension(id int) *world.World {
-	switch id {
+// dimension returns a world by a dimension passed.
+func (srv *Server) dimension(dimension world.Dimension) *world.World {
+	switch dimension {
 	default:
 		return srv.world
-	case 1:
+	case world.Nether:
 		return srv.nether
-	case 2:
+	case world.End:
 		return srv.end
 	}
 }
@@ -417,7 +440,7 @@ func (srv *Server) handleSessionClose(c session.Controllable) {
 func (srv *Server) createPlayer(id uuid.UUID, conn session.Conn, data *player.Data) *session.Session {
 	w, gm, pos := srv.world, srv.world.DefaultGameMode(), srv.world.Spawn().Vec3Middle()
 	if data != nil {
-		w, gm, pos = srv.dimension(data.Dimension), data.GameMode, data.Position
+		w, gm, pos = data.World, data.GameMode, data.Position
 	}
 	s := session.New(conn, srv.conf.MaxChunkRadius, srv.conf.Log, srv.conf.JoinMessage, srv.conf.QuitMessage)
 	p := player.NewWithSession(conn.IdentityData().DisplayName, conn.IdentityData().XUID, id, srv.parseSkin(conn.ClientData()), s, pos, data)
@@ -449,6 +472,7 @@ func (srv *Server) createWorld(dim world.Dimension, nether, end **world.World) *
 		Generator:       srv.conf.Generator(dim),
 		RandomTickSpeed: srv.conf.RandomTickSpeed,
 		ReadOnly:        srv.conf.ReadOnlyWorld,
+		Entities:        srv.conf.Entities,
 		PortalDestination: func(dim world.Dimension) *world.World {
 			if dim == world.Nether {
 				return *nether
@@ -467,21 +491,17 @@ func (srv *Server) createWorld(dim world.Dimension, nether, end **world.World) *
 func (srv *Server) parseSkin(data login.ClientData) skin.Skin {
 	// Gophertunnel guarantees the following values are valid data and are of
 	// the correct size.
-	skinData, _ := base64.StdEncoding.DecodeString(data.SkinData)
-	capeData, _ := base64.StdEncoding.DecodeString(data.CapeData)
-	modelData, _ := base64.StdEncoding.DecodeString(data.SkinGeometry)
 	skinResourcePatch, _ := base64.StdEncoding.DecodeString(data.SkinResourcePatch)
-	modelConfig, _ := skin.DecodeModelConfig(skinResourcePatch)
 
 	playerSkin := skin.New(data.SkinImageWidth, data.SkinImageHeight)
 	playerSkin.Persona = data.PersonaSkin
-	playerSkin.Pix = skinData
-	playerSkin.Model = modelData
-	playerSkin.ModelConfig = modelConfig
+	playerSkin.Pix, _ = base64.StdEncoding.DecodeString(data.SkinData)
+	playerSkin.Model, _ = base64.StdEncoding.DecodeString(data.SkinGeometry)
+	playerSkin.ModelConfig, _ = skin.DecodeModelConfig(skinResourcePatch)
 	playerSkin.PlayFabID = data.PlayFabID
 
 	playerSkin.Cape = skin.NewCape(data.CapeImageWidth, data.CapeImageHeight)
-	playerSkin.Cape.Pix = capeData
+	playerSkin.Cape.Pix, _ = base64.StdEncoding.DecodeString(data.CapeData)
 
 	for _, animation := range data.AnimatedImageData {
 		var t skin.AnimationType
@@ -507,8 +527,8 @@ func (srv *Server) parseSkin(data login.ClientData) skin.Skin {
 // registerTargetFunc registers a cmd.TargetFunc to be able to get all players
 // connected and all entities in the server's world.
 func (srv *Server) registerTargetFunc() {
-	cmd.AddTargetFunc(func(src cmd.Source) (entities, players []cmd.Target) {
-		return sliceutil.Convert[cmd.Target](src.World().Entities()), sliceutil.Convert[cmd.Target](srv.Players())
+	cmd.AddTargetFunc(func(src cmd.Source) (entities []cmd.Target, players []cmd.NamedTarget) {
+		return sliceutil.Convert[cmd.Target](src.World().Entities()), sliceutil.Convert[cmd.NamedTarget](srv.Players())
 	})
 }
 
@@ -586,8 +606,5 @@ var (
 // values in the runtime ID maps. init also seeds the global `rand` with the
 // current time.
 func init() {
-	// Seeding the random for things like lightning that need to use RNG.
-	rand.Seed(time.Now().UnixNano())
-
 	_ = nbt.Unmarshal(itemRuntimeIDData, &itemRuntimeIDs)
 }

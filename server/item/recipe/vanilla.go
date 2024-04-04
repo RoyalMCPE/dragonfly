@@ -44,18 +44,13 @@ func init() {
 		panic(err)
 	}
 
-	var smithingRecipes []shapelessRecipe
-	if err := nbt.Unmarshal(vanillaSmithingData, &smithingRecipes); err != nil {
-		panic(err)
-	}
-
 	var stonecutterRecipes []shapelessRecipe
 	if err := nbt.Unmarshal(vanillaStonecutterData, &stonecutterRecipes); err != nil {
 		panic(err)
 	}
 
-	for _, s := range append(craftingRecipes.Shapeless, append(smithingRecipes, stonecutterRecipes...)...) {
-		input, ok := s.Input.Stacks()
+	for _, s := range append(craftingRecipes.Shapeless, stonecutterRecipes...) {
+		input, ok := s.Input.Items()
 		output, okTwo := s.Output.Stacks()
 		if !ok || !okTwo {
 			// This can be expected to happen, as some recipes contain blocks or items that aren't currently implemented.
@@ -70,7 +65,7 @@ func init() {
 	}
 
 	for _, s := range craftingRecipes.Shaped {
-		input, ok := s.Input.Stacks()
+		input, ok := s.Input.Items()
 		output, okTwo := s.Output.Stacks()
 		if !ok || !okTwo {
 			// This can be expected to happen - refer to the comment above.
@@ -85,5 +80,25 @@ func init() {
 				priority: uint32(s.Priority),
 			},
 		})
+	}
+
+	var smithingRecipes []shapelessRecipe
+	if err := nbt.Unmarshal(vanillaSmithingData, &smithingRecipes); err != nil {
+		panic(err)
+	}
+
+	for _, s := range smithingRecipes {
+		input, ok := s.Input.Items()
+		output, okTwo := s.Output.Stacks()
+		if !ok || !okTwo {
+			// This can be expected to happen - refer to the comment above.
+			continue
+		}
+		Register(Smithing{recipe{
+			input:    input,
+			output:   output,
+			block:    s.Block,
+			priority: uint32(s.Priority),
+		}})
 	}
 }

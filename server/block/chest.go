@@ -111,7 +111,7 @@ func (c Chest) RemoveViewer(v ContainerViewer, w *world.World, pos cube.Pos) {
 // Activate ...
 func (c Chest) Activate(pos cube.Pos, _ cube.Face, w *world.World, u item.User, _ *item.UseContext) bool {
 	if opener, ok := u.(ContainerOpener); ok {
-		if d, ok := w.Block(pos.Side(cube.FaceUp)).(LightDiffuser); ok && d.LightDiffusionLevel() == 0 {
+		if d, ok := w.Block(pos.Side(cube.FaceUp)).(LightDiffuser); ok && d.LightDiffusionLevel() <= 2 {
 			opener.OpenBlockContainer(pos)
 		}
 		return true
@@ -127,7 +127,7 @@ func (c Chest) UseOnBlock(pos cube.Pos, face cube.Face, _ mgl64.Vec3, w *world.W
 	}
 	//noinspection GoAssignmentToReceiver
 	c = NewChest()
-	c.Facing = user.Facing().Opposite()
+	c.Facing = user.Rotation().Direction().Opposite()
 
 	place(w, pos, c, user, ctx)
 	return placed(ctx)
@@ -154,8 +154,8 @@ func (c Chest) DecodeNBT(data map[string]any) any {
 	//noinspection GoAssignmentToReceiver
 	c = NewChest()
 	c.Facing = facing
-	c.CustomName = nbtconv.Map[string](data, "CustomName")
-	nbtconv.InvFromNBT(c.inventory, nbtconv.Map[[]any](data, "Items"))
+	c.CustomName = nbtconv.String(data, "CustomName")
+	nbtconv.InvFromNBT(c.inventory, nbtconv.Slice(data, "Items"))
 	return c
 }
 
@@ -184,7 +184,7 @@ func (Chest) EncodeItem() (name string, meta int16) {
 
 // EncodeBlock ...
 func (c Chest) EncodeBlock() (name string, properties map[string]any) {
-	return "minecraft:chest", map[string]any{"facing_direction": 2 + int32(c.Facing)}
+	return "minecraft:chest", map[string]any{"minecraft:cardinal_direction": c.Facing.String()}
 }
 
 // allChests ...

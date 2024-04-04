@@ -23,7 +23,7 @@ type Config struct {
 	// Provider is the Provider implementation used to read and write World data. If set to nil, the Provider used will
 	// be NopProvider, which does not store any data to disk.
 	Provider Provider
-	// Generator is the Generator implementation used to generate new areas of the World. If set to nil, the Provider
+	// Generator is the Generator implementation used to generate new areas of the World. If set to nil, the Generator
 	// used will be NopGenerator, which generates completely empty chunks.
 	Generator Generator
 	// ReadOnly specifies if the World should be read-only, meaning no new data will be written to the Provider.
@@ -36,6 +36,9 @@ type Config struct {
 	// tick or when deciding where to strike lightning. If set to nil, `rand.NewSource(time.Now().Unix())` will be used
 	// to generate a new source.
 	RandSource rand.Source
+	// Entities is an EntityRegistry with all entity types registered that may
+	// be added to the World.
+	Entities EntityRegistry
 }
 
 // Logger is a logger implementation that may be passed to the Log field of Config. World will send errors and debug
@@ -71,7 +74,7 @@ func (conf Config) New() *World {
 		scheduledUpdates: make(map[cube.Pos]int64),
 		entities:         make(map[Entity]ChunkPos),
 		viewers:          make(map[*Loader]Viewer),
-		chunks:           make(map[ChunkPos]*chunkData),
+		chunks:           make(map[ChunkPos]*Column),
 		closing:          make(chan struct{}),
 		handler:          *atomic.NewValue[Handler](NopHandler{}),
 		r:                rand.New(conf.RandSource),

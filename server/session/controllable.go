@@ -19,6 +19,7 @@ import (
 // implemented in the form of a Player.
 // Methods in Controllable will be added as Session needs them in order to handle packets.
 type Controllable interface {
+	Name() string
 	world.Entity
 	item.User
 	form.Submitter
@@ -82,7 +83,9 @@ type Controllable interface {
 
 	Exhaust(points float64)
 
-	EditSign(pos cube.Pos, text string) error
+	OpenSign(pos cube.Pos, frontSide bool)
+	EditSign(pos cube.Pos, frontText, backText string) error
+	TurnLecternPage(pos cube.Pos, page int) error
 
 	EnderChestInventory() *inventory.Inventory
 

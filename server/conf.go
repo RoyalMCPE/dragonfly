@@ -3,6 +3,7 @@ package server
 import (
 	"fmt"
 	"github.com/df-mc/dragonfly/server/block"
+	"github.com/df-mc/dragonfly/server/entity"
 	"github.com/df-mc/dragonfly/server/internal/packbuilder"
 	"github.com/df-mc/dragonfly/server/player"
 	"github.com/df-mc/dragonfly/server/player/playerdb"
@@ -11,13 +12,12 @@ import (
 	"github.com/df-mc/dragonfly/server/world/biome"
 	"github.com/df-mc/dragonfly/server/world/generator"
 	"github.com/df-mc/dragonfly/server/world/mcdb"
-	"github.com/df-mc/goleveldb/leveldb/opt"
 	"github.com/google/uuid"
 	"github.com/sandertv/gophertunnel/minecraft/resource"
 	"github.com/sirupsen/logrus"
-	"golang.org/x/exp/slices"
 	"os"
 	"path/filepath"
+	"slices"
 )
 
 // Config contains options for starting a Minecraft server.
@@ -92,6 +92,10 @@ type Config struct {
 	// left as 0, the RandomTickSpeed will default to a speed of 3 blocks per
 	// sub chunk per tick (normal ticking speed).
 	RandomTickSpeed int
+	// Entities is a world.EntityRegistry with all entity types registered that
+	// may be added to the Server's worlds. If no entity types are registered,
+	// Entities will be set to entity.DefaultRegistry.
+	Entities world.EntityRegistry
 }
 
 // Logger is used to report information and errors from a dragonfly Server. Any
@@ -131,6 +135,9 @@ func (conf Config) New() *Server {
 	}
 	if conf.MaxChunkRadius == 0 {
 		conf.MaxChunkRadius = 12
+	}
+	if len(conf.Entities.Types()) == 0 {
+		conf.Entities = entity.DefaultRegistry
 	}
 	if !conf.DisableResourceBuilding {
 		if pack, ok := packbuilder.BuildResourcePack(); ok {
@@ -187,6 +194,12 @@ type UserConfig struct {
 		QuitMessage string
 	}
 	World struct {
+		// SaveData controls whether a world's data will be saved and loaded.
+		// If true, the server will use the default LevelDB data provider and if
+		// false, an empty provider will be used. To use your own provider, turn
+		// this value to false, as you will still be able to pass your own
+		// provider.
+		SaveData bool
 		// Folder is the folder that the data of the world resides in.
 		Folder string
 	}
@@ -202,7 +215,7 @@ type UserConfig struct {
 		// SaveData controls whether a player's data will be saved and loaded.
 		// If true, the server will use the default LevelDB data provider and if
 		// false, an empty provider will be used. To use your own provider, turn
-		// this value to false as you will still be able to pass your own
+		// this value to false, as you will still be able to pass your own
 		// provider.
 		SaveData bool
 		// Folder controls where the player data will be stored by the default
@@ -239,9 +252,11 @@ func (uc UserConfig) Config(log Logger) (Config, error) {
 		ShutdownMessage:         uc.Server.ShutdownMessage,
 		DisableResourceBuilding: !uc.Resources.AutoBuildPack,
 	}
-	conf.WorldProvider, err = mcdb.New(log, uc.World.Folder, opt.FlateCompression)
-	if err != nil {
-		return conf, fmt.Errorf("create world provider: %w", err)
+	if uc.World.SaveData {
+		conf.WorldProvider, err = mcdb.Config{Log: log}.Open(uc.World.Folder)
+		if err != nil {
+			return conf, fmt.Errorf("create world provider: %w", err)
+		}
 	}
 	conf.Resources, err = loadResources(uc.Resources.Folder)
 	if err != nil {
@@ -267,7 +282,7 @@ func loadResources(dir string) ([]*resource.Pack, error) {
 	}
 	packs := make([]*resource.Pack, len(resources))
 	for i, entry := range resources {
-		packs[i], err = resource.Compile(filepath.Join(dir, entry.Name()))
+		packs[i], err = resource.ReadPath(filepath.Join(dir, entry.Name()))
 		if err != nil {
 			return nil, fmt.Errorf("compile resource (%v): %w", entry.Name(), err)
 		}
@@ -297,6 +312,7 @@ func DefaultConfig() UserConfig {
 	c.Server.AuthEnabled = true
 	c.Server.JoinMessage = "%v has joined the game"
 	c.Server.QuitMessage = "%v has left the game"
+	c.World.SaveData = true
 	c.World.Folder = "world"
 	c.Players.MaximumChunkRadius = 32
 	c.Players.SaveData = true

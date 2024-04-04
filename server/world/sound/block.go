@@ -45,6 +45,12 @@ type ChestOpen struct{ sound }
 // ChestClose is played when a chest is closed.
 type ChestClose struct{ sound }
 
+// EnderChestOpen is played when a ender chest is opened.
+type EnderChestOpen struct{ sound }
+
+// EnderChestClose is played when a ender chest is closed.
+type EnderChestClose struct{ sound }
+
 // BarrelOpen is played when a barrel is opened.
 type BarrelOpen struct{ sound }
 
@@ -54,8 +60,59 @@ type BarrelClose struct{ sound }
 // Deny is a sound played when a block is placed or broken above a 'Deny' block from Education edition.
 type Deny struct{ sound }
 
-// Door is a sound played when a (trap)door is opened or closed.
-type Door struct{ sound }
+// DoorOpen is a sound played when a door is opened.
+type DoorOpen struct {
+	// Block is the block which is being opened, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
+
+// DoorClose is a sound played when a door is closed.
+type DoorClose struct {
+	// Block is the block which is being closed, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
+
+// TrapdoorOpen is a sound played when a trapdoor is opened.
+type TrapdoorOpen struct {
+	// Block is the block which is being opened, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
+
+// TrapdoorClose is a sound played when a trapdoor is closed.
+type TrapdoorClose struct {
+	// Block is the block which is being closed, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
+
+// FenceGateOpen is a sound played when a fence gate is opened.
+type FenceGateOpen struct {
+	// Block is the block which is being opened, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
+
+// FenceGateClose is a sound played when a fence gate is closed.
+type FenceGateClose struct {
+	// Block is the block which is being closed, for which a sound should be played. The sound played depends on the
+	// block type.
+	Block world.Block
+
+	sound
+}
 
 // DoorCrash is a sound played when a door is forced open.
 type DoorCrash struct{ sound }
@@ -121,6 +178,9 @@ type ComposterFillLayer struct{ sound }
 
 // ComposterReady is a sound played when a composter has produced bone meal and is ready to be collected.
 type ComposterReady struct{ sound }
+
+// LecternBookPlace is a sound played when a book is placed in a lectern.
+type LecternBookPlace struct{ sound }
 
 // sound implements the world.Sound interface.
 type sound struct{}

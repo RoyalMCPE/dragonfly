@@ -8,8 +8,8 @@ import (
 	"github.com/df-mc/dragonfly/server/item/recipe"
 	"github.com/df-mc/dragonfly/server/world"
 	"github.com/sandertv/gophertunnel/minecraft/protocol"
-	"golang.org/x/exp/slices"
 	"math"
+	"slices"
 )
 
 // handleCraft handles the CraftRecipe request action.
@@ -49,7 +49,7 @@ func (h *ItemStackRequestHandler) handleCraft(a *protocol.CraftRecipeStackReques
 			processed, consumed[slot-offset] = true, true
 			st := has.Grow(-expected.Count())
 			h.setItemInSlot(protocol.StackRequestSlotInfo{
-				ContainerID: containerCraftingGrid,
+				ContainerID: protocol.ContainerCraftingInput,
 				Slot:        byte(slot),
 			}, st, s)
 			break
@@ -77,29 +77,32 @@ func (h *ItemStackRequestHandler) handleAutoCraft(a *protocol.AutoCraftRecipeSta
 	}
 
 	repetitions := int(a.TimesCrafted)
-	input := make([]item.Stack, 0, len(craft.Input()))
+	input := make([]recipe.Item, 0, len(craft.Input()))
 	for _, i := range craft.Input() {
-		input = append(input, i.Grow(i.Count()*(repetitions-1)))
+		input = append(input, grow(i, i.Count()*(repetitions-1)))
 	}
 
-	flattenedInputs := make([]item.Stack, 0, len(input))
+	flattenedInputs := make([]recipe.Item, 0, len(input))
 	for _, i := range input {
 		if i.Empty() {
 			// We don't actually need this item - it's empty, so avoid putting it in our flattened inputs.
 			continue
 		}
 
-		if ind := slices.IndexFunc(flattenedInputs, func(st item.Stack) bool {
-			return matchingStacks(st, i)
+		if ind := slices.IndexFunc(flattenedInputs, func(it recipe.Item) bool {
+			return matchingStacks(it, i)
 		}); ind >= 0 {
-			i = i.Grow(flattenedInputs[ind].Count())
+			i = grow(i, flattenedInputs[ind].Count())
 			flattenedInputs = slices.Delete(flattenedInputs, ind, ind+1)
 		}
 		flattenedInputs = append(flattenedInputs, i)
 	}
 
 	for _, expected := range flattenedInputs {
-		for id, inv := range map[byte]*inventory.Inventory{containerCraftingGrid: s.ui, containerFullInventory: s.inv} {
+		for id, inv := range map[byte]*inventory.Inventory{
+			protocol.ContainerCraftingInput:              s.ui,
+			protocol.ContainerCombinedHotBarAndInventory: s.inv,
+		} {
 			for slot, has := range inv.Slots() {
 				if has.Empty() {
 					// We don't have this item, skip it.
@@ -115,7 +118,7 @@ func (h *ItemStackRequestHandler) handleAutoCraft(a *protocol.AutoCraftRecipeSta
 					removal = remaining
 				}
 
-				expected, has = expected.Grow(-removal), has.Grow(-removal)
+				expected, has = grow(expected, -removal), has.Grow(-removal)
 				h.setItemInSlot(protocol.StackRequestSlotInfo{
 					ContainerID: id,
 					Slot:        byte(slot),
@@ -196,12 +199,39 @@ func duplicateStack(input item.Stack, newType world.Item) item.Stack {
 }
 
 // matchingStacks returns true if the two stacks are the same in a crafting scenario.
-func matchingStacks(has, expected item.Stack) bool {
-	_, variants := expected.Value("variants")
-	if !variants {
-		return has.Comparable(expected)
+func matchingStacks(has, expected recipe.Item) bool {
+	switch expected := expected.(type) {
+	case item.Stack:
+		switch has := has.(type) {
+		case item.Stack:
+			_, variants := expected.Value("variants")
+			if !variants {
+				return has.Comparable(expected)
+			}
+			nameOne, _ := has.Item().EncodeItem()
+			nameTwo, _ := expected.Item().EncodeItem()
+			return nameOne == nameTwo
+		}
+		panic(fmt.Errorf("client has unexpected recipe item %T", has))
+	case recipe.ItemTag:
+		switch has := has.(type) {
+		case item.Stack:
+			name, _ := has.Item().EncodeItem()
+			return expected.Contains(name)
+		case recipe.ItemTag:
+			return has.Tag() == expected.Tag()
+		}
+		panic(fmt.Errorf("client has unexpected recipe item %T", has))
 	}
-	nameOne, _ := has.Item().EncodeItem()
-	nameTwo, _ := expected.Item().EncodeItem()
-	return nameOne == nameTwo
+	panic(fmt.Errorf("tried to match with unexpected recipe item %T", expected))
+}
+
+func grow(i recipe.Item, count int) recipe.Item {
+	switch i := i.(type) {
+	case item.Stack:
+		return i.Grow(count)
+	case recipe.ItemTag:
+		return recipe.NewItemTag(i.Tag(), i.Count()+count)
+	}
+	panic(fmt.Errorf("unexpected recipe item %T", i))
 }

@@ -6,7 +6,7 @@ import (
 	"github.com/df-mc/dragonfly/server/world/sound"
 )
 
-//noinspection SpellCheckingInspection
+// noinspection SpellCheckingInspection
 func init() {
 	world.RegisterItem(AmethystShard{})
 	world.RegisterItem(Apple{})
@@ -157,5 +157,8 @@ func init() {
 	}
 	for _, stew := range StewTypes() {
 		world.RegisterItem(SuspiciousStew{Type: stew})
+	}
+	for _, sherd := range SherdTypes() {
+		world.RegisterItem(PotterySherd{Type: sherd})
 	}
 }

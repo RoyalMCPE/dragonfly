@@ -153,6 +153,7 @@ func init() {
 	registerAll(allLanterns())
 	registerAll(allLava())
 	registerAll(allLeaves())
+	registerAll(allLecterns())
 	registerAll(allLight())
 	registerAll(allLitPumpkins())
 	registerAll(allLogs())
@@ -189,6 +190,7 @@ func init() {
 	registerAll(allWheat())
 	registerAll(allWood())
 	registerAll(allWool())
+	registerAll(allDecoratedPots())
 }
 
 func init() {
@@ -264,6 +266,7 @@ func init() {
 	world.RegisterItem(Kelp{})
 	world.RegisterItem(Ladder{})
 	world.RegisterItem(Lapis{})
+	world.RegisterItem(Lectern{})
 	world.RegisterItem(LitPumpkin{})
 	world.RegisterItem(Loom{})
 	world.RegisterItem(MelonSeeds{})
@@ -324,6 +327,7 @@ func init() {
 	world.RegisterItem(Terracotta{})
 	world.RegisterItem(Tuff{})
 	world.RegisterItem(WheatSeeds{})
+	world.RegisterItem(DecoratedPot{})
 	world.RegisterItem(item.Bucket{Content: item.LiquidBucketContent(Lava{})})
 	world.RegisterItem(item.Bucket{Content: item.LiquidBucketContent(Water{})})
 	world.RegisterItem(item.Bucket{Content: item.MilkBucketContent()})
@@ -392,9 +396,11 @@ func init() {
 	for _, f := range DoubleFlowerTypes() {
 		world.RegisterItem(DoubleFlower{Type: f})
 	}
-	for _, g := range GrassTypes() {
-		world.RegisterItem(DoubleTallGrass{Type: g})
+	for _, g := range TallGrassTypes() {
 		world.RegisterItem(TallGrass{Type: g})
+	}
+	for _, g := range DoubleTallGrassTypes() {
+		world.RegisterItem(DoubleTallGrass{Type: g})
 	}
 	for _, p := range PrismarineTypes() {
 		world.RegisterItem(Prismarine{Type: p})

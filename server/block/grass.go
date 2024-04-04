@@ -27,10 +27,10 @@ var plantSelection = []world.Block{
 // init adds extra variants of TallGrass to the plant selection.
 func init() {
 	for i := 0; i < 8; i++ {
-		plantSelection = append(plantSelection, TallGrass{Type: Fern()})
+		plantSelection = append(plantSelection, TallGrass{Type: FernTallGrass()})
 	}
 	for i := 0; i < 12; i++ {
-		plantSelection = append(plantSelection, TallGrass{Type: NormalGrass()})
+		plantSelection = append(plantSelection, TallGrass{Type: NormalTallGrass()})
 	}
 }
 
@@ -104,12 +104,12 @@ func (Grass) CompostChance() float64 {
 
 // EncodeItem ...
 func (Grass) EncodeItem() (name string, meta int16) {
-	return "minecraft:grass", 0
+	return "minecraft:grass_block", 0
 }
 
 // EncodeBlock ...
 func (Grass) EncodeBlock() (string, map[string]any) {
-	return "minecraft:grass", nil
+	return "minecraft:grass_block", nil
 }
 
 // Till ...
