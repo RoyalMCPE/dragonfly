@@ -66,8 +66,9 @@ type playerData struct {
 
 	cooldowns map[string]time.Time
 
-	speed       float64
-	flightSpeed float64
+	speed               float64
+	flightSpeed         float64
+	verticalFlightSpeed float64
 
 	health     *entity.HealthManager
 	experience *entity.ExperienceManager
@@ -89,9 +90,10 @@ type playerData struct {
 
 	breaking          bool
 	breakingPos       cube.Pos
+	breakingFace      cube.Face
 	lastBreakDuration time.Duration
 
-	breakParticleCounter uint32
+	breakCounter uint32
 
 	hunger *hungerManager
 
@@ -329,10 +331,16 @@ func (p *Player) ExecuteCommand(commandLine string) {
 		return
 	}
 	args := strings.Split(commandLine, " ")
-	command, ok := cmd.ByAlias(args[0][1:])
+
+	name, ok := strings.CutPrefix(args[0], "/")
+	if !ok {
+		return
+	}
+
+	command, ok := cmd.ByAlias(name)
 	if !ok {
 		o := &cmd.Output{}
-		o.Errort(cmd.MessageUnknown, args[0])
+		o.Errort(cmd.MessageUnknown, name)
 		p.SendCommandOutput(o)
 		return
 	}
@@ -464,6 +472,19 @@ func (p *Player) SetFlightSpeed(flightSpeed float64) {
 // corresponds to 0.5 blocks/tick.
 func (p *Player) FlightSpeed() float64 {
 	return p.flightSpeed
+}
+
+// SetVerticalFlightSpeed sets the flight speed of the player on the Y axis. The value passed represents the
+// base speed, which is the blocks/tick speed that the player will obtain while flying.
+func (p *Player) SetVerticalFlightSpeed(flightSpeed float64) {
+	p.verticalFlightSpeed = flightSpeed
+	p.session().SendAbilities(p)
+}
+
+// VerticalFlightSpeed returns the flight speed of the player on the Y axis, with the value representing the
+// base speed. The default vertical flight speed of a player is 1.0, which corresponds to 1 block/tick.
+func (p *Player) VerticalFlightSpeed() float64 {
+	return p.verticalFlightSpeed
 }
 
 // Health returns the current health of the player. It will always be lower than Player.MaxHealth().
@@ -1503,12 +1524,16 @@ func (p *Player) handleUseContext(ctx *item.UseContext) {
 	p.SetHeldItems(p.subtractItem(p.damageItem(i, ctx.Damage), ctx.CountSub), left)
 	p.addNewItem(ctx)
 	for _, it := range ctx.ConsumedItems {
-		_ = p.offHand.RemoveItem(it)
-		it = it.Grow(-left.Count())
+		_, offHand := p.HeldItems()
+		if offHand.Comparable(it) {
+			if err := p.offHand.RemoveItem(it); err == nil {
+				continue
+			}
 
-		if !it.Empty() {
-			_ = p.Inventory().RemoveItem(it)
+			it = it.Grow(-offHand.Count())
 		}
+
+		_ = p.Inventory().RemoveItem(it)
 	}
 }
 
@@ -1730,7 +1755,7 @@ func (p *Player) StartBreaking(pos cube.Pos, face cube.Face) {
 		punchable.Punch(pos, face, p.tx, p)
 	}
 
-	p.breaking = true
+	p.breaking, p.breakingFace = true, face
 	p.SwingArm()
 
 	if p.GameMode().CreativeInventory() {
@@ -1786,7 +1811,7 @@ func (p *Player) AbortBreaking() {
 	if !p.breaking {
 		return
 	}
-	p.breaking, p.breakParticleCounter = true, 0
+	p.breaking, p.breakCounter = false, 0
 	for _, viewer := range p.viewers() {
 		viewer.ViewBlockAction(p.breakingPos, block.StopCrackAction{})
 	}
@@ -1800,19 +1825,17 @@ func (p *Player) ContinueBreaking(face cube.Face) {
 		return
 	}
 	pos := p.breakingPos
-
-	p.SwingArm()
-
 	b := p.tx.Block(pos)
 	p.tx.AddParticle(pos.Vec3(), particle.PunchBlock{Block: b, Face: face})
 
-	if p.breakParticleCounter += 1; p.breakParticleCounter%5 == 0 {
+	if p.breakCounter++; p.breakCounter%5 == 0 {
+		p.SwingArm()
+
 		// We send this sound only every so often. Vanilla doesn't send it every tick while breaking
 		// either. Every 5 ticks seems accurate.
-		p.tx.PlaySound(pos.Vec3(), sound.BlockBreaking{Block: p.tx.Block(pos)})
+		p.tx.PlaySound(pos.Vec3(), sound.BlockBreaking{Block: b})
 	}
-	breakTime := p.breakTime(pos)
-	if breakTime != p.lastBreakDuration {
+	if breakTime := p.breakTime(pos); breakTime != p.lastBreakDuration {
 		for _, viewer := range p.viewers() {
 			viewer.ViewBlockAction(pos, block.ContinueCrackAction{BreakTime: breakTime})
 		}
@@ -1841,8 +1864,13 @@ func (p *Player) placeBlock(pos cube.Pos, b world.Block, ignoreBBox bool) bool {
 		p.resendBlocks(pos, cube.Faces()...)
 		return false
 	}
-	if !ignoreBBox && p.obstructedPos(pos, b) {
-		p.resendBlocks(pos, cube.Faces()...)
+	if obstructed, selfOnly := p.obstructedPos(pos, b); obstructed && !ignoreBBox {
+		if !selfOnly {
+			// Only resend blocks if there were other entities blocking the
+			// placement than the player itself. Resending blocks placed inside
+			// the player itself leads to synchronisation issues.
+			p.resendBlocks(pos, cube.Faces()...)
+		}
 		return false
 	}
 
@@ -1857,9 +1885,13 @@ func (p *Player) placeBlock(pos cube.Pos, b world.Block, ignoreBBox bool) bool {
 	return true
 }
 
-// obstructedPos checks if the position passed is obstructed if the block passed is attempted to be placed.
-// The function returns true if there is an entity in the way that could prevent the block from being placed.
-func (p *Player) obstructedPos(pos cube.Pos, b world.Block) bool {
+// obstructedPos checks if the position passed is obstructed if the block
+// passed is attempted to be placed. The function returns true as the first
+// bool if there is an entity in the way that could prevent the block from
+// being placed.
+// If the only entity preventing the block from being placed is the player
+// itself, the second bool returned is true too.
+func (p *Player) obstructedPos(pos cube.Pos, b world.Block) (obstructed, selfOnly bool) {
 	blockBoxes := b.Model().BBox(pos, p.tx)
 	for i, box := range blockBoxes {
 		blockBoxes[i] = box.Translate(pos.Vec3())
@@ -1872,11 +1904,15 @@ func (p *Player) obstructedPos(pos cube.Pos, b world.Block) bool {
 			continue
 		default:
 			if cube.AnyIntersections(blockBoxes, t.BBox(e).Translate(e.Position()).Grow(-1e-6)) {
-				return true
+				obstructed = true
+				if e.H() == p.handle {
+					continue
+				}
+				return true, false
 			}
 		}
 	}
-	return false
+	return obstructed, true
 }
 
 // BreakBlock makes the player break a block in the world at a position passed. If the player is unable to
@@ -1998,7 +2034,7 @@ func (p *Player) PickBlock(pos cube.Pos) {
 		p.SetHeldItems(pickedItem, offhand)
 		return
 	}
-	if firstEmpty < 8 {
+	if firstEmpty < 9 {
 		_ = p.SetHeldSlot(firstEmpty)
 		_ = p.Inventory().SetItem(firstEmpty, pickedItem)
 		return
@@ -2140,8 +2176,15 @@ func (p *Player) Collect(s item.Stack) (int, bool) {
 	if p.Handler().HandleItemPickup(ctx, &s); ctx.Cancelled() {
 		return 0, false
 	}
-	n, _ := p.Inventory().AddItem(s)
-	return n, true
+	var added int
+	if _, offHand := p.HeldItems(); !offHand.Empty() && offHand.Comparable(s) {
+		added, _ = p.offHand.AddItem(s)
+	}
+	if s.Count() != added {
+		n, _ := p.Inventory().AddItem(s.Grow(-added))
+		added += n
+	}
+	return added, true
 }
 
 // Experience returns the amount of experience the player has.
@@ -2294,7 +2337,7 @@ func (p *Player) OpenBlockContainer(pos cube.Pos, tx *world.Tx) {
 // HideEntity hides a world.Entity from the Player so that it can under no circumstance see it. Hidden entities can be
 // made visible again through a call to ShowEntity.
 func (p *Player) HideEntity(e world.Entity) {
-	if p.session() != session.Nop && p != e {
+	if p.session() != session.Nop && p.H() != e.H() {
 		p.session().StopShowingEntity(e)
 	}
 }
@@ -2348,7 +2391,7 @@ func (p *Player) Tick(tx *world.Tx, current int64) {
 	p.tickFood()
 	p.tickAirSupply()
 
-	if p.Position()[1] < float64(p.tx.Range()[0]) && p.GameMode().AllowsTakingDamage() && current%10 == 0 {
+	if p.Position()[1] < float64(p.tx.Range()[0]) {
 		p.Hurt(4, entity.VoidDamageSource{})
 	}
 	if p.insideOfSolid() {
@@ -2379,6 +2422,9 @@ func (p *Player) Tick(tx *world.Tx, current int64) {
 		if c, ok := held.Item().(item.Chargeable); ok {
 			c.ContinueCharge(p, tx, p.useContext(), p.useDuration())
 		}
+	}
+	if p.breaking {
+		p.ContinueBreaking(p.breakingFace)
 	}
 
 	for it, ti := range p.cooldowns {
@@ -2628,17 +2674,17 @@ func (p *Player) checkEntityInsiders(entityBBox cube.BBox) {
 
 // checkOnGround checks if the player is currently considered to be on the ground.
 func (p *Player) checkOnGround() bool {
-	box := Type.BBox(p).Translate(p.Position())
+	box := Type.BBox(p).Translate(p.Position()).Extend(mgl64.Vec3{0, -0.05})
 	b := box.Grow(1)
 
-	low, high := cube.PosFromVec3(b.Min()), cube.PosFromVec3(b.Max())
+	epsilon := mgl64.Vec3{mgl64.Epsilon, mgl64.Epsilon, mgl64.Epsilon}
+	low, high := cube.PosFromVec3(b.Min().Add(epsilon)), cube.PosFromVec3(b.Max().Sub(epsilon))
 	for x := low[0]; x <= high[0]; x++ {
 		for z := low[2]; z <= high[2]; z++ {
 			for y := low[1]; y < high[1]; y++ {
 				pos := cube.Pos{x, y, z}
-				boxList := p.tx.Block(pos).Model().BBox(pos, p.tx)
-				for _, bb := range boxList {
-					if bb.GrowVec3(mgl64.Vec3{0, 0.05}).Translate(pos.Vec3()).IntersectsWith(box) {
+				for _, bb := range p.tx.Block(pos).Model().BBox(pos, p.tx) {
+					if bb.Translate(pos.Vec3()).IntersectsWith(box) {
 						return true
 					}
 				}
@@ -3053,10 +3099,9 @@ func (p *Player) resendBlocks(pos cube.Pos, faces ...cube.Face) {
 func (p *Player) resendBlock(pos cube.Pos) {
 	b := p.tx.Block(pos)
 	p.session().ViewBlockUpdate(pos, b, 0)
-	if _, ok := b.(world.Liquid); !ok {
-		if liq, ok := p.tx.Liquid(pos); ok {
-			p.session().ViewBlockUpdate(pos, liq, 1)
-		}
+	if _, ok := b.(world.LiquidDisplacer); ok {
+		liq, _ := p.tx.Liquid(pos)
+		p.session().ViewBlockUpdate(pos, liq, 1)
 	}
 }
 
